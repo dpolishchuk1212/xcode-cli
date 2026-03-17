@@ -20,14 +20,19 @@ public struct ProjectNotFoundError: Error, CustomStringConvertible {
 }
 
 public enum ProjectFinder {
-    public static func discover(workspace: String?, project: String?, scheme: String?) throws -> ProjectInfo {
+    public static func discover(
+        workspace: String?,
+        project: String?,
+        scheme: String?,
+        in directory: String? = nil
+    ) throws -> ProjectInfo {
         // Explicit paths — use as-is
         if workspace != nil || project != nil {
             let resolved = scheme ?? resolveScheme(workspace: workspace, project: project)
             return ProjectInfo(workspace: workspace, project: project, scheme: resolved)
         }
 
-        let cwd = FileManager.default.currentDirectoryPath
+        let cwd = directory ?? FileManager.default.currentDirectoryPath
         let contents = (try? FileManager.default.contentsOfDirectory(atPath: cwd)) ?? []
 
         // Prefer .xcworkspace (skip internal ones inside .xcodeproj)

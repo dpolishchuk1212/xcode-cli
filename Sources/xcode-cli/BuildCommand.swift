@@ -2,6 +2,14 @@ import ArgumentParser
 import Foundation
 import XcodeCLICore
 
+enum OutputFilter: String, ExpressibleByArgument, CaseIterable, Sendable {
+    case all       // full xcodebuild output
+    case issues    // errors + warnings
+    case errors    // errors only
+
+    static let `default`: OutputFilter = .issues
+}
+
 struct BuildCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "build",
@@ -23,8 +31,8 @@ struct BuildCommand: ParsableCommand {
     @Option(name: .shortAndLong, help: "Build destination (e.g. 'platform=iOS Simulator,name=iPhone 16')")
     var destination: String?
 
-    @Flag(name: .shortAndLong, help: "Show full xcodebuild output")
-    var verbose: Bool = false
+    @Option(name: .shortAndLong, help: "Filter output: all (full log), issues (errors+warnings), errors (errors only)")
+    var filter: OutputFilter = .issues
 
     mutating func run() throws {
         let info = try ProjectFinder.discover(
@@ -68,7 +76,7 @@ struct BuildCommand: ParsableCommand {
         )
         let elapsed = String(format: "%.1fs", Date().timeIntervalSince(start))
 
-        if verbose {
+        if filter == .all {
             print(result.output)
         }
 
@@ -89,7 +97,7 @@ struct BuildCommand: ParsableCommand {
             for e in errors { print("  \(e)") }
         }
 
-        if !warnings.isEmpty {
+        if filter != .errors && !warnings.isEmpty {
             print("\nWarnings:")
             for w in warnings { print("  \(w)") }
         }

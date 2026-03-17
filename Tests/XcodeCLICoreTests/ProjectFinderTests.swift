@@ -32,31 +32,22 @@ struct ProjectFinderTests {
     // MARK: - Auto-discovery
 
     @Test func discoversXcodeproj() throws {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("xcode-cli-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        let tmp = makeTmpDir()
+        defer { cleanup(tmp) }
 
-        // Create a fake .xcodeproj directory
         try FileManager.default.createDirectory(
             at: tmp.appendingPathComponent("Foo.xcodeproj"),
             withIntermediateDirectories: true
         )
 
-        let saved = FileManager.default.currentDirectoryPath
-        FileManager.default.changeCurrentDirectoryPath(tmp.path)
-        defer { FileManager.default.changeCurrentDirectoryPath(saved) }
-
-        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "Foo")
+        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "Foo", in: tmp.path)
         #expect(info.project == "Foo.xcodeproj")
         #expect(info.scheme == "Foo")
     }
 
     @Test func prefersWorkspaceOverProject() throws {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("xcode-cli-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        let tmp = makeTmpDir()
+        defer { cleanup(tmp) }
 
         try FileManager.default.createDirectory(
             at: tmp.appendingPathComponent("App.xcodeproj"),
@@ -67,58 +58,39 @@ struct ProjectFinderTests {
             withIntermediateDirectories: true
         )
 
-        let saved = FileManager.default.currentDirectoryPath
-        FileManager.default.changeCurrentDirectoryPath(tmp.path)
-        defer { FileManager.default.changeCurrentDirectoryPath(saved) }
-
-        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "App")
+        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "App", in: tmp.path)
         #expect(info.workspace == "App.xcworkspace")
         #expect(info.project == nil)
     }
 
     @Test func discoversPackageSwift() throws {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("xcode-cli-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        let tmp = makeTmpDir()
+        defer { cleanup(tmp) }
 
         FileManager.default.createFile(
             atPath: tmp.appendingPathComponent("Package.swift").path,
             contents: nil
         )
 
-        let saved = FileManager.default.currentDirectoryPath
-        FileManager.default.changeCurrentDirectoryPath(tmp.path)
-        defer { FileManager.default.changeCurrentDirectoryPath(saved) }
-
-        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "MyPkg")
+        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "MyPkg", in: tmp.path)
         #expect(info.workspace == nil)
         #expect(info.project == nil)
         #expect(info.scheme == "MyPkg")
     }
 
     @Test func throwsWhenNothingFound() throws {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("xcode-cli-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
-
-        let saved = FileManager.default.currentDirectoryPath
-        FileManager.default.changeCurrentDirectoryPath(tmp.path)
-        defer { FileManager.default.changeCurrentDirectoryPath(saved) }
+        let tmp = makeTmpDir()
+        defer { cleanup(tmp) }
 
         #expect(throws: ProjectNotFoundError.self) {
-            try ProjectFinder.discover(workspace: nil, project: nil, scheme: nil)
+            try ProjectFinder.discover(workspace: nil, project: nil, scheme: nil, in: tmp.path)
         }
     }
 
     @Test func skipsInternalXcworkspace() throws {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("xcode-cli-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        let tmp = makeTmpDir()
+        defer { cleanup(tmp) }
 
-        // Internal workspace inside .xcodeproj — should be skipped
         let projDir = tmp.appendingPathComponent("App.xcodeproj")
         try FileManager.default.createDirectory(at: projDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(
@@ -126,13 +98,21 @@ struct ProjectFinderTests {
             withIntermediateDirectories: true
         )
 
-        let saved = FileManager.default.currentDirectoryPath
-        FileManager.default.changeCurrentDirectoryPath(tmp.path)
-        defer { FileManager.default.changeCurrentDirectoryPath(saved) }
-
-        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "App")
-        // Should find the .xcodeproj, NOT the internal .xcworkspace
+        let info = try ProjectFinder.discover(workspace: nil, project: nil, scheme: "App", in: tmp.path)
         #expect(info.project == "App.xcodeproj")
         #expect(info.workspace == nil)
+    }
+
+    // MARK: - Helpers
+
+    private func makeTmpDir() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xcode-cli-test-\(UUID().uuidString)")
+        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func cleanup(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
     }
 }
