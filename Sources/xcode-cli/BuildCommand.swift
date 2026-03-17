@@ -2,13 +2,7 @@ import ArgumentParser
 import Foundation
 import XcodeCLICore
 
-enum OutputFilter: String, ExpressibleByArgument, CaseIterable, Sendable {
-    case all       // full xcodebuild output
-    case issues    // errors + warnings
-    case errors    // errors only
-
-    static let `default`: OutputFilter = .issues
-}
+extension OutputFilter: ExpressibleByArgument {}
 
 struct BuildCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -76,31 +70,15 @@ struct BuildCommand: ParsableCommand {
         )
         let elapsed = String(format: "%.1fs", Date().timeIntervalSince(start))
 
-        if filter == .all {
-            print(result.output)
-        }
+        let formatter = BuildResultFormatter(
+            issues: BuildLogParser.parse(result.output),
+            exitCode: result.exitCode,
+            elapsed: elapsed,
+            filter: filter,
+            rawOutput: result.output
+        )
 
-        let issues = BuildLogParser.parse(result.output)
-        let errors = issues.filter { $0.kind == .error }
-        let warnings = issues.filter { $0.kind == .warning }
-
-        // Summary line
-        if result.exitCode == 0 {
-            let suffix = warnings.isEmpty ? "" : " (\(warnings.count) warning\(warnings.count == 1 ? "" : "s"))"
-            print("✓ Build Succeeded\(suffix) [\(elapsed)]")
-        } else {
-            print("✗ Build Failed (\(errors.count) error\(errors.count == 1 ? "" : "s"), \(warnings.count) warning\(warnings.count == 1 ? "" : "s")) [\(elapsed)]")
-        }
-
-        if !errors.isEmpty {
-            print("\nErrors:")
-            for e in errors { print("  \(e)") }
-        }
-
-        if filter != .errors && !warnings.isEmpty {
-            print("\nWarnings:")
-            for w in warnings { print("  \(w)") }
-        }
+        print(formatter.formatted)
 
         if result.exitCode != 0 {
             throw ExitCode.failure
