@@ -2,6 +2,14 @@ import ArgumentParser
 import Foundation
 import XcodeCLICore
 
+/// PID of the log stream process, used by signal handler to clean up orphans.
+nonisolated(unsafe) var _logStreamPID: pid_t = 0
+
+private func _cleanupLogStream(_: Int32) {
+    if _logStreamPID > 0 { kill(_logStreamPID, SIGTERM) }
+    _exit(0)
+}
+
 struct RunCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
@@ -144,6 +152,13 @@ struct RunCommand: ParsableCommand {
         var logProcess: Process?
         if console {
             logProcess = startLogStream(deviceUDID: device.udid, bundleId: bundleId)
+
+            // Ensure log stream is killed on exit (Ctrl+C, SIGTERM, etc.)
+            if let lp = logProcess {
+                _logStreamPID = lp.processIdentifier
+                signal(SIGINT, _cleanupLogStream)
+                signal(SIGTERM, _cleanupLogStream)
+            }
         }
 
         if debug {
