@@ -32,7 +32,7 @@ struct BuildCommand: ParsableCommand {
     var destination: String?
 
     @Option(name: .shortAndLong, help: "Filter output: all (full log), issues (errors+warnings), errors (errors only)")
-    var filter: OutputFilter = .issues
+    var filter: OutputFilter = .errors
 
     mutating func run() throws {
         let info = try ProjectFinder.discover(
