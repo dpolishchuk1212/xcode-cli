@@ -177,16 +177,18 @@ struct RunCommand: ParsableCommand {
                 throw ExitCode.failure
             }
 
-            if console {
-                print("Streaming console (Ctrl+C to stop)...\n")
-                logProcess?.waitUntilExit()
+            if console, let logProc = logProcess {
+                let appPid: Int32? = launchResult.output.split(separator: ":")
+                    .last.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                print("Streaming console (Ctrl+C or terminate app to stop)...\n")
+                waitForProcessExit(logProcess: logProc, appPid: appPid)
             }
         } else {
             // --wait --no-debug: just install and wait
             print("App installed. Launch it manually in the Simulator.")
-            if console {
+            if console, let logProc = logProcess {
                 print("Streaming console (Ctrl+C to stop)...\n")
-                logProcess?.waitUntilExit()
+                logProc.waitUntilExit()
             }
         }
     }
@@ -213,6 +215,24 @@ struct RunCommand: ParsableCommand {
         process.standardError = FileHandle.standardError
         try? process.run()
         return process
+    }
+
+    /// Wait for either the log process to exit or the app process to die.
+    /// Simulator apps run as real macOS processes, so `kill(pid, 0)` works.
+    private func waitForProcessExit(logProcess: Process, appPid: Int32?) {
+        if let appPid {
+            // Poll until the app process is gone, then stop log stream
+            DispatchQueue.global().async {
+                while kill(appPid, 0) == 0 {
+                    Thread.sleep(forTimeInterval: 0.5)
+                }
+                logProcess.terminate()
+            }
+        }
+        logProcess.waitUntilExit()
+        if appPid != nil {
+            print("\nApp terminated.")
+        }
     }
 
     private func runLLDB(pid: String?, waitForName: String?, appBinaryPath: String?) {
