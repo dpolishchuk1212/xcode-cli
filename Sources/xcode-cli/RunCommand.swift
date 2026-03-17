@@ -87,9 +87,11 @@ struct RunCommand: ParsableCommand {
             throw ExitCode.failure
         }
 
+        let output = RunOutputConfig(debug: debug, console: console)
+
         // 4. Boot simulator if needed
         if !device.isBooted {
-            print("Booting \(device.name)...")
+            if output.showStatusMessages { print("Booting \(device.name)...") }
             let bootResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "boot", device.udid])
             if bootResult.exitCode != 0 {
                 print("Error: Failed to boot simulator: \(bootResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
@@ -127,7 +129,7 @@ struct RunCommand: ParsableCommand {
         // 6. Install app
         if let buildDir, let productName {
             let appPath = "\(buildDir)/\(productName)"
-            print("Installing \(productName) on \(device.name)...")
+            if output.showStatusMessages { print("Installing \(productName) on \(device.name)...") }
             let installResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "install", device.udid, appPath])
             if installResult.exitCode != 0 {
                 print("Error: Install failed: \(installResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
@@ -147,7 +149,7 @@ struct RunCommand: ParsableCommand {
         if debug {
             // LLDB interactive session
             if shouldLaunch {
-                print("Launching \(schemeName) with debugger on \(device.name)...")
+                if output.showStatusMessages { print("Launching \(schemeName) with debugger on \(device.name)...") }
                 // Launch the app first, then attach LLDB
                 let launchResult = ProcessRunner.exec(
                     "/usr/bin/xcrun",
@@ -162,14 +164,16 @@ struct RunCommand: ParsableCommand {
                 let pid = launchResult.output.split(separator: ":").last?.trimmingCharacters(in: .whitespacesAndNewlines)
                 runLLDB(pid: pid, waitForName: nil, appBinaryPath: appBinaryPath)
             } else {
-                print("Waiting for \(schemeName) to launch on \(device.name)...")
-                print("Launch the app manually in the Simulator, then LLDB will attach.")
+                if output.showStatusMessages {
+                    print("Waiting for \(schemeName) to launch on \(device.name)...")
+                    print("Launch the app manually in the Simulator, then LLDB will attach.")
+                }
                 runLLDB(pid: nil, waitForName: executableName ?? schemeName, appBinaryPath: appBinaryPath)
             }
             logProcess?.terminate()
         } else if shouldLaunch {
             // No debugger — just launch and stream logs
-            print("Launching \(schemeName) on \(device.name)...")
+            if output.showStatusMessages { print("Launching \(schemeName) on \(device.name)...") }
             let launchResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "launch", device.udid, bundleId])
             if launchResult.exitCode != 0 {
                 logProcess?.terminate()
@@ -180,14 +184,14 @@ struct RunCommand: ParsableCommand {
             if console, let logProc = logProcess {
                 let appPid: Int32? = launchResult.output.split(separator: ":")
                     .last.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                print("Streaming console (Ctrl+C or terminate app to stop)...\n")
+                if output.showStatusMessages { print("Streaming console (Ctrl+C or terminate app to stop)...\n") }
                 waitForProcessExit(logProcess: logProc, appPid: appPid)
             }
         } else {
             // --wait --no-debug: just install and wait
-            print("App installed. Launch it manually in the Simulator.")
+            if output.showStatusMessages { print("App installed. Launch it manually in the Simulator.") }
             if console, let logProc = logProcess {
-                print("Streaming console (Ctrl+C to stop)...\n")
+                if output.showStatusMessages { print("Streaming console (Ctrl+C to stop)...\n") }
                 logProc.waitUntilExit()
             }
         }
