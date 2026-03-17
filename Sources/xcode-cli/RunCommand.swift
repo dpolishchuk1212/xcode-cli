@@ -177,13 +177,13 @@ struct RunCommand: ParsableCommand {
                 }
                 // Extract PID from launch output (format: "com.app.bundle: 12345")
                 let pid = launchResult.output.split(separator: ":").last?.trimmingCharacters(in: .whitespacesAndNewlines)
-                runLLDB(pid: pid, waitForName: nil, appBinaryPath: appBinaryPath)
+                runLLDB(pid: pid, waitForName: nil, appBinaryPath: appBinaryPath, hasLogProcess: logProcess != nil)
             } else {
                 if output.showStatusMessages {
                     print("Waiting for \(schemeName) to launch on \(device.name)...")
                     print("Launch the app manually in the Simulator, then LLDB will attach.")
                 }
-                runLLDB(pid: nil, waitForName: executableName ?? schemeName, appBinaryPath: appBinaryPath)
+                runLLDB(pid: nil, waitForName: executableName ?? schemeName, appBinaryPath: appBinaryPath, hasLogProcess: logProcess != nil)
             }
             logProcess?.terminate()
         } else if shouldLaunch {
@@ -256,32 +256,55 @@ struct RunCommand: ParsableCommand {
         }
     }
 
-    private func runLLDB(pid: String?, waitForName: String?, appBinaryPath: String?) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    private func runLLDB(pid: String?, waitForName: String?, appBinaryPath: String?, hasLogProcess: Bool) {
+        var args = ["/usr/bin/xcrun", "lldb"]
+
+        if let appBinaryPath { args.append(appBinaryPath) }
 
         if let pid {
-            if let appBinaryPath {
-                process.arguments = ["lldb", appBinaryPath, "--attach-pid", pid]
-            } else {
-                process.arguments = ["lldb", "--attach-pid", pid]
-            }
+            args += ["--attach-pid", pid]
         } else if let waitForName {
-            if let appBinaryPath {
-                process.arguments = ["lldb", appBinaryPath, "-o", "process attach --name \(waitForName) --waitfor"]
+            if appBinaryPath != nil {
+                args += ["-o", "process attach --name \(waitForName) --waitfor"]
             } else {
-                process.arguments = ["lldb", "--wait-for", waitForName]
+                args += ["--wait-for", waitForName]
             }
         } else {
             return
         }
 
-        // Hand off stdin/stdout to the user for interactive LLDB
-        process.standardInput = FileHandle.standardInput
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
+        if !hasLogProcess {
+            // No log stream to manage — exec directly for full terminal control
+            let cArgs = args.map { strdup($0) } + [nil]
+            execvp(args[0], cArgs)
+            // Only reached if exec fails
+            perror("execvp")
+            return
+        }
 
-        try? process.run()
-        process.waitUntilExit()
+        // Log stream is running — use posix_spawn with its own process group,
+        // give it the terminal, wait, then clean up.
+        var attr: posix_spawnattr_t? = nil
+        posix_spawnattr_init(&attr)
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setpgroup(&attr, 0)
+
+        let cArgs: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) } + [nil]
+        var childPid: pid_t = 0
+        let rc = posix_spawnp(&childPid, args[0], nil, &attr, cArgs, environ)
+        posix_spawnattr_destroy(&attr)
+        cArgs.forEach { if let p = $0 { free(p) } }
+
+        guard rc == 0 else { return }
+
+        // Give terminal to LLDB so it can use its interactive line editor
+        let originalGroup = tcgetpgrp(STDIN_FILENO)
+        tcsetpgrp(STDIN_FILENO, childPid)
+
+        var status: Int32 = 0
+        waitpid(childPid, &status, 0)
+
+        // Reclaim terminal
+        tcsetpgrp(STDIN_FILENO, originalGroup)
     }
 }
