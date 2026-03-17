@@ -1,14 +1,26 @@
-import ArgumentParser
 import Foundation
 
-struct ProjectInfo: Sendable {
-    let workspace: String?
-    let project: String?
-    let scheme: String?
+public struct ProjectInfo: Sendable {
+    public let workspace: String?
+    public let project: String?
+    public let scheme: String?
+
+    public init(workspace: String?, project: String?, scheme: String?) {
+        self.workspace = workspace
+        self.project = project
+        self.scheme = scheme
+    }
 }
 
-enum ProjectFinder {
-    static func discover(workspace: String?, project: String?, scheme: String?) throws -> ProjectInfo {
+public struct ProjectNotFoundError: Error, CustomStringConvertible {
+    public let directory: String
+    public var description: String {
+        "No .xcworkspace, .xcodeproj, or Package.swift found in \(directory)"
+    }
+}
+
+public enum ProjectFinder {
+    public static func discover(workspace: String?, project: String?, scheme: String?) throws -> ProjectInfo {
         // Explicit paths — use as-is
         if workspace != nil || project != nil {
             let resolved = scheme ?? resolveScheme(workspace: workspace, project: project)
@@ -38,7 +50,7 @@ enum ProjectFinder {
             return ProjectInfo(workspace: nil, project: nil, scheme: resolved)
         }
 
-        throw ValidationError("No .xcworkspace, .xcodeproj, or Package.swift found in current directory")
+        throw ProjectNotFoundError(directory: cwd)
     }
 
     // MARK: - Private

@@ -1,12 +1,17 @@
 import Foundation
 
-struct ProcessResult: Sendable {
-    let output: String
-    let exitCode: Int32
+public struct ProcessResult: Sendable {
+    public let output: String
+    public let exitCode: Int32
+
+    public init(output: String, exitCode: Int32) {
+        self.output = output
+        self.exitCode = exitCode
+    }
 }
 
-enum ProcessRunner {
-    static func exec(_ executable: String, arguments: [String]) -> ProcessResult {
+public enum ProcessRunner {
+    public static func exec(_ executable: String, arguments: [String]) -> ProcessResult {
         let process = Process()
         let pipe = Pipe()
 

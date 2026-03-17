@@ -1,17 +1,25 @@
 import Foundation
 
-struct BuildIssue: Sendable {
-    enum Kind: String, Sendable { case error, warning }
+public struct BuildIssue: Sendable, Equatable {
+    public enum Kind: String, Sendable { case error, warning }
 
-    let kind: Kind
-    let file: String?
-    let line: Int?
-    let column: Int?
-    let message: String
+    public let kind: Kind
+    public let file: String?
+    public let line: Int?
+    public let column: Int?
+    public let message: String
+
+    public init(kind: Kind, file: String?, line: Int?, column: Int?, message: String) {
+        self.kind = kind
+        self.file = file
+        self.line = line
+        self.column = column
+        self.message = message
+    }
 }
 
 extension BuildIssue: CustomStringConvertible {
-    var description: String {
+    public var description: String {
         guard let file, let line, let column else { return message }
         return "\(relativePath(file)):\(line):\(column): \(message)"
     }
@@ -22,8 +30,8 @@ extension BuildIssue: CustomStringConvertible {
     }
 }
 
-enum BuildLogParser {
-    static func parse(_ output: String) -> [BuildIssue] {
+public enum BuildLogParser {
+    public static func parse(_ output: String) -> [BuildIssue] {
         var issues: [BuildIssue] = []
         var seen = Set<String>()
 
@@ -56,9 +64,6 @@ enum BuildLogParser {
         if let m = line.wholeMatch(of: /^xcodebuild: error: (.+)$/) {
             return BuildIssue(kind: .error, file: nil, line: nil, column: nil, message: String(m.1))
         }
-
-        // xcodebuild: warning: message  (e.g. destination warnings)
-        // skip these — they're usually not actionable
 
         // ld: error/warning (linker)
         if let m = line.wholeMatch(of: /^ld: (error|warning): (.+)$/) {
