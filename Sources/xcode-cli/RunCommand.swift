@@ -208,8 +208,10 @@ struct RunCommand: ParsableCommand {
     private func startLogStream(deviceUDID: String, bundleId: String) -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        let appName = bundleId.split(separator: ".").last.map(String.init) ?? bundleId
         process.arguments = ["simctl", "spawn", deviceUDID, "log", "stream",
-                             "--predicate", "subsystem == '\(bundleId)' OR processImagePath CONTAINS '\(bundleId.split(separator: ".").last ?? "")'",
+                             "--level", "debug",
+                             "--predicate", "subsystem == '\(bundleId)' OR (processImagePath ENDSWITH '/\(appName)' AND senderImagePath ENDSWITH '/\(appName)' AND subsystem == '')",
                              "--style", "compact"]
         process.standardOutput = FileHandle.standardError  // logs go to stderr so they don't interfere with LLDB
         process.standardError = FileHandle.standardError
