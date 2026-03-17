@@ -110,10 +110,18 @@ struct RunCommand: ParsableCommand {
         let bundleId = extractSetting("PRODUCT_BUNDLE_IDENTIFIER", from: settingsResult.output)
         let buildDir = extractSetting("BUILT_PRODUCTS_DIR", from: settingsResult.output)
         let productName = extractSetting("FULL_PRODUCT_NAME", from: settingsResult.output)
+        let executableName = extractSetting("EXECUTABLE_NAME", from: settingsResult.output)
 
         guard let bundleId else {
             print("Error: Could not determine bundle identifier from build settings.")
             throw ExitCode.failure
+        }
+
+        // Compute app binary path for LLDB symbol loading
+        let appBinaryPath: String? = if let buildDir, let productName, let executableName {
+            "\(buildDir)/\(productName)/\(executableName)"
+        } else {
+            nil
         }
 
         // 6. Install app
@@ -152,11 +160,11 @@ struct RunCommand: ParsableCommand {
                 }
                 // Extract PID from launch output (format: "com.app.bundle: 12345")
                 let pid = launchResult.output.split(separator: ":").last?.trimmingCharacters(in: .whitespacesAndNewlines)
-                runLLDB(bundleId: bundleId, deviceUDID: device.udid, pid: pid)
+                runLLDB(pid: pid, waitForName: nil, appBinaryPath: appBinaryPath)
             } else {
                 print("Waiting for \(schemeName) to launch on \(device.name)...")
                 print("Launch the app manually in the Simulator, then LLDB will attach.")
-                runLLDB(bundleId: bundleId, deviceUDID: device.udid, pid: nil)
+                runLLDB(pid: nil, waitForName: executableName ?? schemeName, appBinaryPath: appBinaryPath)
             }
             logProcess?.terminate()
         } else if shouldLaunch {
@@ -207,14 +215,24 @@ struct RunCommand: ParsableCommand {
         return process
     }
 
-    private func runLLDB(bundleId: String, deviceUDID: String, pid: String?) {
+    private func runLLDB(pid: String?, waitForName: String?, appBinaryPath: String?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
 
         if let pid {
-            process.arguments = ["lldb", "--attach-pid", pid]
+            if let appBinaryPath {
+                process.arguments = ["lldb", appBinaryPath, "--attach-pid", pid]
+            } else {
+                process.arguments = ["lldb", "--attach-pid", pid]
+            }
+        } else if let waitForName {
+            if let appBinaryPath {
+                process.arguments = ["lldb", appBinaryPath, "-o", "process attach --name \(waitForName) --waitfor"]
+            } else {
+                process.arguments = ["lldb", "--wait-for", waitForName]
+            }
         } else {
-            process.arguments = ["lldb", "--wait-for", bundleId]
+            return
         }
 
         // Hand off stdin/stdout to the user for interactive LLDB
