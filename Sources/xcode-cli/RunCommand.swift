@@ -47,6 +47,9 @@ struct RunCommand: ParsableCommand {
     @Flag(name: .long, inversion: .prefixedNo, help: "Stream console logs")
     var console: Bool = true
 
+    @Option(name: .long, help: "Filter console logs by pattern (case-insensitive substring match)")
+    var grep: String?
+
     mutating func run() throws {
         // 1. Build (unless --skip-build)
         if !skipBuild {
@@ -151,7 +154,7 @@ struct RunCommand: ParsableCommand {
         // Start console log streaming in background
         var logProcess: Process?
         if console {
-            logProcess = startLogStream(deviceUDID: device.udid, bundleId: bundleId)
+            logProcess = startLogStream(deviceUDID: device.udid, bundleId: bundleId, filter: LogFilter(pattern: grep))
 
             // Ensure log stream is killed on exit (Ctrl+C, SIGTERM, etc.)
             if let lp = logProcess {
@@ -224,7 +227,7 @@ struct RunCommand: ParsableCommand {
         return nil
     }
 
-    private func startLogStream(deviceUDID: String, bundleId: String) -> Process {
+    private func startLogStream(deviceUDID: String, bundleId: String, filter: LogFilter) -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         let appName = bundleId.split(separator: ".").last.map(String.init) ?? bundleId
@@ -232,8 +235,28 @@ struct RunCommand: ParsableCommand {
                              "--level", "debug",
                              "--predicate", "subsystem == '\(bundleId)' OR (processImagePath ENDSWITH '/\(appName)' AND senderImagePath ENDSWITH '/\(appName)' AND subsystem == '')",
                              "--style", "compact"]
-        process.standardOutput = FileHandle.standardError  // logs go to stderr so they don't interfere with LLDB
-        process.standardError = FileHandle.standardError
+
+        if filter.pattern != nil {
+            // Pipe through filter — read lines and only forward matches to stderr
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+                for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                    if filter.matches(String(line)) {
+                        FileHandle.standardError.write(Data((line + "\n").utf8))
+                    }
+                }
+            }
+        } else {
+            // No filter — stream directly to stderr
+            process.standardOutput = FileHandle.standardError
+            process.standardError = FileHandle.standardError
+        }
+
         try? process.run()
         return process
     }
