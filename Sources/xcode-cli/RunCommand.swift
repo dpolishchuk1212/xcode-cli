@@ -51,21 +51,31 @@ struct RunCommand: ParsableCommand {
     var grep: String?
 
     mutating func run() throws {
-        // 1. Build (unless --skip-build)
+        // 1. Resolve project and simulator first (needed for build destination)
+        let info = try ProjectFinder.discover(workspace: workspace, project: project, scheme: scheme)
+        guard let schemeName = info.scheme else {
+            print("Error: Could not determine scheme. Use --scheme to specify.")
+            throw ExitCode.failure
+        }
+
+        let simListResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "list", "devices", "-j"])
+        let allDevices = SimulatorFinder.parseDevices(from: simListResult.output)
+        guard let device = SimulatorFinder.findBest(from: allDevices, matching: simulator) else {
+            print("Error: No suitable iOS Simulator found.\(simulator.map { " No match for '\($0)'." } ?? "")")
+            throw ExitCode.failure
+        }
+
+        // 2. Build (unless --skip-build), targeting the selected simulator
         if !skipBuild {
-            let info = try ProjectFinder.discover(workspace: workspace, project: project, scheme: scheme)
             var buildArgs = ["build"]
             if let ws = info.workspace { buildArgs += ["-workspace", ws] }
             else if let proj = info.project { buildArgs += ["-project", proj] }
-            if let s = info.scheme { buildArgs += ["-scheme", s] }
-            buildArgs += ["-configuration", configuration,
-                          "-destination", "generic/platform=iOS Simulator"]
+            buildArgs += ["-scheme", schemeName,
+                          "-configuration", configuration,
+                          "-destination", "platform=iOS Simulator,id=\(device.udid)"]
 
-            let label = info.scheme
-                ?? info.workspace?.replacingOccurrences(of: ".xcworkspace", with: "")
-                ?? info.project?.replacingOccurrences(of: ".xcodeproj", with: "")
-                ?? "project"
-            print("Building \(label) (\(configuration))...")
+            let label = schemeName
+            print("Building \(label) (\(configuration)) for \(device.name)...")
 
             let start = Date()
             let result = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["xcodebuild"] + buildArgs)
@@ -81,21 +91,6 @@ struct RunCommand: ParsableCommand {
             print(formatter.formatted)
 
             if result.exitCode != 0 { throw ExitCode.failure }
-        }
-
-        // 2. Resolve scheme (needed for bundle ID and app path)
-        let info = try ProjectFinder.discover(workspace: workspace, project: project, scheme: scheme)
-        guard let schemeName = info.scheme else {
-            print("Error: Could not determine scheme. Use --scheme to specify.")
-            throw ExitCode.failure
-        }
-
-        // 3. Find simulator
-        let simListResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "list", "devices", "-j"])
-        let allDevices = SimulatorFinder.parseDevices(from: simListResult.output)
-        guard let device = SimulatorFinder.findBest(from: allDevices, matching: simulator) else {
-            print("Error: No suitable iOS Simulator found.\(simulator.map { " No match for '\($0)'." } ?? "")")
-            throw ExitCode.failure
         }
 
         let output = RunOutputConfig(debug: debug, console: console)
