@@ -1,8 +1,8 @@
 class XcodeCli < Formula
   desc "Token-efficient Xcode CLI for coding agents"
   homepage "https://github.com/dpolishchuk1212/xcode-cli"
-  url "https://github.com/dpolishchuk1212/xcode-cli/archive/refs/tags/v0.1.2.tar.gz"
-  sha256 "eb13c0d4abf27a1d2d0b47775281689177434d2eedb8c90b3b5858c7493e6683"
+  url "https://github.com/dpolishchuk1212/xcode-cli/archive/refs/tags/v0.1.3.tar.gz"
+  sha256 "c96646c6741be6903a7ae83029c717c999b9ed4746ff9a040c59777e1643afd6"
   license "MIT"
 
   depends_on xcode: ["16.0", :build]
