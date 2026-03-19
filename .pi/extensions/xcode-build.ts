@@ -67,6 +67,7 @@ function buildStatusBase(label: string, config: string, destination: string, com
 export default function (pi: ExtensionAPI) {
   let appMonitor: ReturnType<typeof setInterval> | null = null;
   let consolePid: number | null = null;
+  let currentLogFile: string | null = null;
   const LOG_FILE_PREFIX = "/tmp/xcode-cli-console-";
 
   function stopMonitor() {
@@ -301,6 +302,7 @@ export default function (pi: ExtensionAPI) {
 
         // Use a timestamp-based log file (PID not known yet — console does the launch)
         logFile = `${LOG_FILE_PREFIX}${Date.now()}.log`;
+        currentLogFile = logFile;
         try {
           const child = spawn("xcode-cli", [
             "console",
@@ -366,6 +368,69 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: finalOutput }],
         details: { success, launched, simulator, logFile, exitCode: runResult.code, errorCount, warningCount },
+      };
+    },
+  });
+
+  // ── xcode_console ──────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "xcode_console",
+    label: "Xcode Console",
+    description:
+      "Read console logs from a running or recently-run iOS Simulator app. " +
+      "Filters by grep pattern (defaults to errors/crashes). " +
+      "Use after xcode_run to inspect app behavior.",
+    promptSnippet: "Read iOS Simulator console logs (grep for errors by default)",
+    promptGuidelines: [
+      "Use xcode_console to check app logs after xcode_run — it greps the log file efficiently.",
+      "Default filter catches errors and crashes. Pass a custom grep for specific messages.",
+    ],
+    parameters: Type.Object({
+      grep: Type.Optional(Type.String({ description: "Grep pattern (default: errors/crashes). Use '.' to show all logs." })),
+      tail: Type.Optional(Type.Number({ description: "Number of lines from the end (default: all matching)" })),
+    }),
+
+    renderCall(args: any, theme: any) {
+      const pattern = args.grep ?? "errors";
+      let text = theme.fg("toolTitle", theme.bold("xcode_console "));
+      text += theme.fg("muted", pattern);
+      return new Text(text, 0, 0);
+    },
+
+    renderResult(result: any, { expanded, isPartial }: any, theme: any) {
+      const content = result.content?.[0]?.text ?? "";
+      const lines = content.split("\n");
+      const summary = lines[0] ?? "";
+      if (!expanded || lines.length <= 1) return new Text(theme.fg("dim", summary), 0, 0);
+      let text = summary;
+      for (const line of lines.slice(1)) text += "\n" + theme.fg("dim", line);
+      return new Text(text, 0, 0);
+    },
+
+    async execute(_toolCallId, params: any, signal) {
+      if (!currentLogFile) {
+        return { content: [{ type: "text", text: "No console log file. Run an app first with xcode_run." }] };
+      }
+
+      const pattern = params.grep ?? "error|crash|fault|fatal|exception";
+      const tailN = params.tail;
+
+      // Use grep to filter, optionally pipe through tail
+      let cmd = `grep -iE '${pattern.replace(/'/g, "'\\''")}' '${currentLogFile}'`;
+      if (tailN) cmd += ` | tail -n ${tailN}`;
+
+      const result = await pi.exec("bash", ["-c", cmd], { signal, timeout: 10_000 });
+
+      const output = result.stdout.trim();
+      if (!output) {
+        return { content: [{ type: "text", text: `No matches for '${pattern}' in console logs.` }] };
+      }
+
+      const finalOutput = truncateOutput(output);
+      const lineCount = output.split("\n").length;
+      return {
+        content: [{ type: "text", text: `${lineCount} matching line${lineCount > 1 ? "s" : ""}:\n${finalOutput}` }],
       };
     },
   });
