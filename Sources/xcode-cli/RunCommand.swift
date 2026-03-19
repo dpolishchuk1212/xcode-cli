@@ -208,7 +208,18 @@ struct RunCommand: ParsableCommand {
 
             let appPid: Int32? = launchResult.output.split(separator: ":")
                 .last.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-            if let pid = appPid { jsonSet("appPid", pid) }
+            if let pid = appPid {
+                jsonSet("appPid", pid)
+
+                // In JSON mode, start a background debug session (LLDB in tmux)
+                // so the agent can inspect at any time via `debug exec`
+                if json {
+                    if let info = try? DebugSession.start(pid: pid) {
+                        jsonSet("debugSession", true)
+                        jsonSet("debugTmux", info.sessionName)
+                    }
+                }
+            }
 
             if console, let logProc = logProcess {
                 if !json && output.showStatusMessages { print("Streaming console (Ctrl+C or terminate app to stop)...\n") }

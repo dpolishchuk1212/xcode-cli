@@ -253,10 +253,8 @@ export default function (pi: ExtensionAPI) {
 
       const wantConsole = params.console !== false;
 
-      // Build + install (+ launch when console is off)
-      // When console is on, --wait skips launch so console command can do it with stdout capture
+      // Build + install + launch (CLI starts debug session automatically in --json mode)
       const runArgs: string[] = ["run", "--json", "--no-debug", "--no-console"];
-      if (wantConsole) runArgs.push("--wait");
       addProjectArgs(runArgs, params);
       if (params.configuration) runArgs.push("-c", params.configuration);
       if (params.simulator) runArgs.push("--simulator", params.simulator);
@@ -301,58 +299,11 @@ export default function (pi: ExtensionAPI) {
       const issues = formatIssues(errorCount, warningCount);
       let logFile = "";
 
-      if (success && wantConsole && deviceUDID && bundleId) {
-        // Console mode: spawn console --launch (handles launch + stdout + log stream)
+      if (success && launched && appPid) {
+        // App launched — monitor PID and optionally stream console logs
         stopMonitor();
         stopConsole();
-        await stopDebug();
 
-        // Use a timestamp-based log file (PID not known yet — console does the launch)
-        logFile = `${LOG_FILE_PREFIX}${Date.now()}.log`;
-        currentLogFile = logFile;
-        try {
-          const child = spawn("xcode-cli", [
-            "console",
-            "--device-udid", deviceUDID,
-            "--bundle-id", bundleId,
-            "--launch",
-            "--log-file", logFile,
-          ], { stdio: "ignore", detached: true });
-          child.on("error", () => {});
-          child.unref();
-          consolePid = child.pid ?? null;
-
-          // Monitor the console process — when it dies, app has terminated
-          ctx.ui.setStatus("xcode-run", t.fg("success", `▶ Running ${base}${issues}`));
-          const ui = ctx.ui;
-          const cPid = consolePid;
-          if (cPid) {
-            appMonitor = setInterval(() => {
-              try {
-                process.kill(cPid, 0);
-              } catch {
-                ui.setStatus("xcode-run", t.fg("dim", `■ Stopped ${base}${issues}`));
-                stopMonitor();
-              }
-            }, 1000);
-          }
-          launched = true;
-
-          // Auto-attach LLDB debugger in background (wait for app to start, then attach)
-          const appName = bundleId.split(".").pop() ?? "";
-          if (appName) {
-            (async () => {
-              await new Promise(r => setTimeout(r, 2000));
-              await pi.exec("xcode-cli", ["debug", "start", "--app-name", appName], { timeout: 15_000 }).catch(() => {});
-            })();
-          }
-        } catch {
-          logFile = "";
-        }
-      } else if (success && launched && appPid) {
-        // No-console mode: app already launched by run command — just monitor PID
-        stopMonitor();
-        stopConsole();
         ctx.ui.setStatus("xcode-run", t.fg("success", `▶ Running ${base}${issues}`));
         const ui = ctx.ui;
         appMonitor = setInterval(() => {
@@ -363,6 +314,26 @@ export default function (pi: ExtensionAPI) {
             stopMonitor();
           }
         }, 1000);
+
+        // Spawn console log streaming if requested
+        if (wantConsole && deviceUDID && bundleId) {
+          logFile = `${LOG_FILE_PREFIX}${appPid}.log`;
+          currentLogFile = logFile;
+          try {
+            const child = spawn("xcode-cli", [
+              "console",
+              "--device-udid", deviceUDID,
+              "--bundle-id", bundleId,
+              "--app-pid", String(appPid),
+              "--log-file", logFile,
+            ], { stdio: "ignore", detached: true });
+            child.on("error", () => {});
+            child.unref();
+            consolePid = child.pid ?? null;
+          } catch {
+            logFile = "";
+          }
+        }
       } else {
         stopMonitor();
         stopConsole();
