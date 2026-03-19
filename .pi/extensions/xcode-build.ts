@@ -10,7 +10,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { spawn } from "child_process";
+
 
 function addProjectArgs(args: string[], params: any) {
   if (params.workspace) args.push("--workspace", params.workspace);
@@ -69,7 +69,6 @@ export default function (pi: ExtensionAPI) {
   let consolePid: number | null = null;
   let currentLogFile: string | null = null;
   let currentBundleId: string | null = null;
-  const LOG_FILE_PREFIX = "/tmp/xcode-cli-console-";
 
   function stopMonitor() {
     if (appMonitor) { clearInterval(appMonitor); appMonitor = null; }
@@ -253,8 +252,10 @@ export default function (pi: ExtensionAPI) {
 
       const wantConsole = params.console !== false;
 
-      // Build + install + launch (CLI starts debug session automatically in --json mode)
-      const runArgs: string[] = ["run", "--json", "--no-debug", "--no-console"];
+      // Build + install + launch (CLI starts debug session and console log
+      // writer automatically in --json mode)
+      const runArgs: string[] = ["run", "--json", "--no-debug"];
+      if (!wantConsole) runArgs.push("--no-console");
       addProjectArgs(runArgs, params);
       if (params.configuration) runArgs.push("-c", params.configuration);
       if (params.simulator) runArgs.push("--simulator", params.simulator);
@@ -265,7 +266,6 @@ export default function (pi: ExtensionAPI) {
       let success = runResult.code === 0;
       let simulator = params.simulator ?? "";
       let simulatorOS = "";
-      let deviceUDID = "";
       let bundleId = "";
       let buildOutput = "";
       let errorCount = 0;
@@ -273,13 +273,13 @@ export default function (pi: ExtensionAPI) {
       let launched = false;
       let appPid = 0;
       let error = "";
+      let logFile = "";
 
       try {
         const json = JSON.parse(runResult.stdout);
         success = json.success ?? success;
         simulator = json.simulator ?? simulator;
         simulatorOS = json.simulatorOS ?? "";
-        deviceUDID = json.deviceUDID ?? "";
         bundleId = json.bundleId ?? "";
         if (bundleId) currentBundleId = bundleId;
         buildOutput = json.buildOutput ?? "";
@@ -288,6 +288,8 @@ export default function (pi: ExtensionAPI) {
         launched = json.launched ?? false;
         appPid = json.appPid ?? 0;
         error = json.error ?? "";
+        logFile = json.logFile ?? "";
+        consolePid = json.consolePid ?? null;
       } catch {
         buildOutput = (runResult.stdout + runResult.stderr).trim();
       }
@@ -297,12 +299,13 @@ export default function (pi: ExtensionAPI) {
       const simPart = simLabel ? ` | ${simLabel}` : "";
       const base = `${label} | ${config}${simPart}${gitPart}${dirtyPart}`;
       const issues = formatIssues(errorCount, warningCount);
-      let logFile = "";
 
       if (success && launched && appPid) {
-        // App launched — monitor PID and optionally stream console logs
+        // App launched — monitor PID; console log writer was started by xcode-cli
         stopMonitor();
         stopConsole();
+
+        if (logFile) currentLogFile = logFile;
 
         ctx.ui.setStatus("xcode-run", t.fg("success", `▶ Running ${base}${issues}`));
         const ui = ctx.ui;
@@ -314,26 +317,6 @@ export default function (pi: ExtensionAPI) {
             stopMonitor();
           }
         }, 1000);
-
-        // Spawn console log streaming if requested
-        if (wantConsole && deviceUDID && bundleId) {
-          logFile = `${LOG_FILE_PREFIX}${appPid}.log`;
-          currentLogFile = logFile;
-          try {
-            const child = spawn("xcode-cli", [
-              "console",
-              "--device-udid", deviceUDID,
-              "--bundle-id", bundleId,
-              "--app-pid", String(appPid),
-              "--log-file", logFile,
-            ], { stdio: "ignore", detached: true });
-            child.on("error", () => {});
-            child.unref();
-            consolePid = child.pid ?? null;
-          } catch {
-            logFile = "";
-          }
-        }
       } else {
         stopMonitor();
         stopConsole();

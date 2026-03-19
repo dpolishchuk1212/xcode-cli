@@ -66,6 +66,11 @@ struct RunCommand: ParsableCommand {
             try failWith("No suitable iOS Simulator found.\(simulator.map { " No match for '\($0)'." } ?? "")")
         }
 
+        let label = schemeName
+        jsonSet("label", label)
+        if let commit = GitInfo.commitHash() { jsonSet("commit", commit) }
+        jsonSet("uncommitted", GitInfo.uncommittedCount())
+
         jsonSet("simulator", device.name)
         jsonSet("deviceUDID", device.udid)
         if let ver = SimulatorFinder.iosVersion(from: device.runtime) {
@@ -160,9 +165,10 @@ struct RunCommand: ParsableCommand {
         // 7. Launch + attach
         let shouldLaunch = !wait
 
-        // Start console log streaming in background
+        // Start console log streaming in background (interactive mode only;
+        // in JSON mode a detached process is forked after launch)
         var logProcess: Process?
-        if console {
+        if console && !json {
             logProcess = startLogStream(deviceUDID: device.udid, bundleId: bundleId, filter: LogFilter(pattern: grep))
 
             // Ensure log stream is killed on exit (Ctrl+C, SIGTERM, etc.)
@@ -217,6 +223,18 @@ struct RunCommand: ParsableCommand {
                     if let info = try? DebugSession.start(pid: pid) {
                         jsonSet("debugSession", true)
                         jsonSet("debugTmux", info.sessionName)
+                    }
+
+                    // Fork a detached console log writer process
+                    if console {
+                        let logFile = "/tmp/xcode-cli-console-\(pid).log"
+                        if let consolePid = forkConsoleProcess(
+                            deviceUDID: device.udid, bundleId: bundleId,
+                            appPid: pid, logFile: logFile
+                        ) {
+                            jsonSet("logFile", logFile)
+                            jsonSet("consolePid", consolePid)
+                        }
                     }
                 }
             }
@@ -278,6 +296,37 @@ struct RunCommand: ParsableCommand {
             }
         }
         return nil
+    }
+
+    /// Fork a fully detached `xcode-cli console` process that writes logs to a file.
+    /// Returns the child PID on success, nil on failure.
+    private func forkConsoleProcess(deviceUDID: String, bundleId: String, appPid: Int32, logFile: String) -> Int32? {
+        var attr: posix_spawnattr_t? = nil
+        posix_spawnattr_init(&attr)
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setpgroup(&attr, 0)
+
+        var fileActions: posix_spawn_file_actions_t? = nil
+        posix_spawn_file_actions_init(&fileActions)
+        posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&fileActions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_addopen(&fileActions, STDERR_FILENO, "/dev/null", O_WRONLY, 0)
+
+        let args = ["xcode-cli", "console",
+                     "--device-udid", deviceUDID,
+                     "--bundle-id", bundleId,
+                     "--app-pid", String(appPid),
+                     "--log-file", logFile]
+        let cArgs = args.map { strdup($0) } + [nil]
+        defer { cArgs.forEach { if let p = $0 { free(p) } } }
+
+        var childPid: pid_t = 0
+        let rc = posix_spawnp(&childPid, "xcode-cli", &fileActions, &attr, cArgs, environ)
+
+        posix_spawnattr_destroy(&attr)
+        posix_spawn_file_actions_destroy(&fileActions)
+
+        return rc == 0 ? childPid : nil
     }
 
     private func startLogStream(deviceUDID: String, bundleId: String, filter: LogFilter) -> Process {
