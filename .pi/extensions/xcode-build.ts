@@ -11,6 +11,12 @@ import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
+function addProjectArgs(args: string[], params: any) {
+  if (params.workspace) args.push("--workspace", params.workspace);
+  if (params.project) args.push("--project", params.project);
+  if (params.scheme) args.push("-s", params.scheme);
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "xcode_build",
@@ -68,9 +74,7 @@ export default function (pi: ExtensionAPI) {
 
       // 1. Resolve project info + git state
       const infoArgs: string[] = ["info"];
-      if (params.workspace) infoArgs.push("--workspace", params.workspace);
-      if (params.project) infoArgs.push("--project", params.project);
-      if (params.scheme) infoArgs.push("-s", params.scheme);
+      addProjectArgs(infoArgs, params);
 
       let label = params.scheme ?? "project";
       let commit = "";
@@ -87,9 +91,10 @@ export default function (pi: ExtensionAPI) {
       }
 
       // 2. Status parts (reused for both ⏳ and ✓/✗)
+      const destPart = params.destination ? ` | ${params.destination}` : "";
       const gitPart = commit ? ` | ${commit}` : "";
       const dirtyPart = commit ? (uncommitted > 0 ? ` | ${uncommitted} uncommitted` : " | clean") : "";
-      const base = `${label} | ${config}${gitPart}${dirtyPart}`;
+      const base = `${label} | ${config}${destPart}${gitPart}${dirtyPart}`;
 
       // 3. Show building status
       ctx.ui.setStatus("xcode-build", `⏳ ${base}`);
@@ -100,9 +105,7 @@ export default function (pi: ExtensionAPI) {
 
       // 4. Build with JSON output
       const buildArgs: string[] = ["build", "--json"];
-      if (params.workspace) buildArgs.push("--workspace", params.workspace);
-      if (params.project) buildArgs.push("--project", params.project);
-      if (params.scheme) buildArgs.push("-s", params.scheme);
+      addProjectArgs(buildArgs, params);
       if (params.configuration) buildArgs.push("-c", params.configuration);
       if (params.destination) buildArgs.push("-d", params.destination);
       if (params.filter) buildArgs.push("-f", params.filter);
