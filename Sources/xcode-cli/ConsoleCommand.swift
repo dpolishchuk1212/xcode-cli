@@ -80,6 +80,7 @@ struct ConsoleCommand: ParsableCommand {
                 if monitorPid != nil { break }
                 Thread.sleep(forTimeInterval: 0.05)
             }
+
         }
 
         // Start log stream for os_log / Logger / NSLog messages

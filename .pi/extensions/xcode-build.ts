@@ -305,6 +305,7 @@ export default function (pi: ExtensionAPI) {
         // Console mode: spawn console --launch (handles launch + stdout + log stream)
         stopMonitor();
         stopConsole();
+        await stopDebug();
 
         // Use a timestamp-based log file (PID not known yet — console does the launch)
         logFile = `${LOG_FILE_PREFIX}${Date.now()}.log`;
@@ -336,6 +337,15 @@ export default function (pi: ExtensionAPI) {
             }, 1000);
           }
           launched = true;
+
+          // Auto-attach LLDB debugger in background (wait for app to start, then attach)
+          const appName = bundleId.split(".").pop() ?? "";
+          if (appName) {
+            (async () => {
+              await new Promise(r => setTimeout(r, 2000));
+              await pi.exec("xcode-cli", ["debug", "start", "--app-name", appName], { timeout: 15_000 }).catch(() => {});
+            })();
+          }
         } catch {
           logFile = "";
         }
