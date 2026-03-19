@@ -10,6 +10,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { spawn } from "child_process";
 
 function addProjectArgs(args: string[], params: any) {
   if (params.workspace) args.push("--workspace", params.workspace);
@@ -65,12 +66,21 @@ function buildStatusBase(label: string, config: string, destination: string, com
 
 export default function (pi: ExtensionAPI) {
   let appMonitor: ReturnType<typeof setInterval> | null = null;
+  let consolePid: number | null = null;
+  const LOG_FILE_PREFIX = "/tmp/xcode-cli-console-";
 
   function stopMonitor() {
     if (appMonitor) { clearInterval(appMonitor); appMonitor = null; }
   }
 
-  pi.on("session_shutdown", async () => { stopMonitor(); });
+  function stopConsole() {
+    if (consolePid) {
+      try { process.kill(consolePid, "SIGTERM"); } catch {}
+      consolePid = null;
+    }
+  }
+
+  pi.on("session_shutdown", async () => { stopMonitor(); stopConsole(); });
   // ── xcode_build ──────────────────────────────────────────────────────
 
   pi.registerTool({
@@ -189,6 +199,7 @@ export default function (pi: ExtensionAPI) {
       configuration: Type.Optional(Type.String({ description: "Debug or Release (default: Debug)" })),
       simulator: Type.Optional(Type.String({ description: "Simulator name or UDID (default: latest iPhone)" })),
       skipBuild: Type.Optional(Type.Boolean({ description: "Skip the build step (default: false)" })),
+      console: Type.Optional(Type.Boolean({ description: "Stream console logs to a file (default: true)" })),
       workspace: Type.Optional(Type.String({ description: "Path to .xcworkspace" })),
       project: Type.Optional(Type.String({ description: "Path to .xcodeproj" })),
     }),
@@ -246,6 +257,8 @@ export default function (pi: ExtensionAPI) {
       let success = runResult.code === 0;
       let simulator = params.simulator ?? "";
       let simulatorOS = "";
+      let deviceUDID = "";
+      let bundleId = "";
       let buildOutput = "";
       let errorCount = 0;
       let warningCount = 0;
@@ -258,6 +271,8 @@ export default function (pi: ExtensionAPI) {
         success = json.success ?? success;
         simulator = json.simulator ?? simulator;
         simulatorOS = json.simulatorOS ?? "";
+        deviceUDID = json.deviceUDID ?? "";
+        bundleId = json.bundleId ?? "";
         buildOutput = json.buildOutput ?? "";
         errorCount = json.errorCount ?? 0;
         warningCount = json.warningCount ?? 0;
@@ -274,9 +289,14 @@ export default function (pi: ExtensionAPI) {
       const base = `${label} | ${config}${simPart}${gitPart}${dirtyPart}`;
       const issues = formatIssues(errorCount, warningCount);
 
+      // Start console streaming if requested (default: true)
+      const wantConsole = params.console !== false;
+      let logFile = "";
+
       if (success && launched && appPid) {
         // App is running — monitor the PID
         stopMonitor();
+        stopConsole();
         ctx.ui.setStatus("xcode-run", t.fg("success", `▶ Running ${base}${issues}`));
         const ui = ctx.ui;
         appMonitor = setInterval(() => {
@@ -287,8 +307,23 @@ export default function (pi: ExtensionAPI) {
             stopMonitor();
           }
         }, 1000);
+
+        // Spawn background console process writing to a log file
+        if (wantConsole && deviceUDID && bundleId) {
+          logFile = `${LOG_FILE_PREFIX}${appPid}.log`;
+          const child = spawn("xcode-cli", [
+            "console",
+            "--device-udid", deviceUDID,
+            "--bundle-id", bundleId,
+            "--app-pid", String(appPid),
+            "--log-file", logFile,
+          ], { stdio: "ignore", detached: true });
+          child.unref();
+          consolePid = child.pid ?? null;
+        }
       } else {
         stopMonitor();
+        stopConsole();
         const icon = success ? "✓" : "✗";
         ctx.ui.setStatus("xcode-run", success
           ? t.fg("success", `${icon} ${base}${issues}`)
@@ -299,13 +334,14 @@ export default function (pi: ExtensionAPI) {
       let output = "";
       if (buildOutput) output += buildOutput;
       if (launched) output += (output ? "\n" : "") + `✓ Launched on ${simLabel || "Simulator"}`;
+      if (logFile) output += `\nConsole logs: ${logFile}`;
       if (error) output += (output ? "\n" : "") + `Error: ${error}`;
       if (!output) output = success ? "✓ Launched" : "✗ Run Failed";
 
       const finalOutput = truncateOutput(output);
       return {
         content: [{ type: "text", text: finalOutput }],
-        details: { success, launched, simulator, exitCode: runResult.code, errorCount, warningCount },
+        details: { success, launched, simulator, logFile, exitCode: runResult.code, errorCount, warningCount },
       };
     },
   });

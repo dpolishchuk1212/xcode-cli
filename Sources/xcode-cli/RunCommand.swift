@@ -67,6 +67,7 @@ struct RunCommand: ParsableCommand {
         }
 
         jsonSet("simulator", device.name)
+        jsonSet("deviceUDID", device.udid)
         if let ver = SimulatorFinder.iosVersion(from: device.runtime) {
             jsonSet("simulatorOS", "iOS \(ver.major).\(ver.minor)")
         }
@@ -137,6 +138,7 @@ struct RunCommand: ParsableCommand {
         guard let bundleId else {
             try failWith("Could not determine bundle identifier from build settings.")
         }
+        jsonSet("bundleId", bundleId)
 
         // Compute app binary path for LLDB symbol loading
         let appBinaryPath: String? = if let buildDir, let productName, let executableName {
@@ -270,10 +272,9 @@ struct RunCommand: ParsableCommand {
     private func startLogStream(deviceUDID: String, bundleId: String, filter: LogFilter) -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        let appName = bundleId.split(separator: ".").last.map(String.init) ?? bundleId
         process.arguments = ["simctl", "spawn", deviceUDID, "log", "stream",
                              "--level", "debug",
-                             "--predicate", "subsystem == '\(bundleId)' OR (processImagePath ENDSWITH '/\(appName)' AND senderImagePath ENDSWITH '/\(appName)' AND subsystem == '')",
+                             "--predicate", LogFilter.logStreamPredicate(bundleId: bundleId),
                              "--style", "compact"]
 
         if filter.pattern != nil {
