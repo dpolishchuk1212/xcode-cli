@@ -132,7 +132,10 @@ export default function (pi: ExtensionAPI) {
 
       // 6. Final persistent status: ✓/✗ Label | Config | commit | dirty | errors/warnings
       const icon = success ? "✓" : "✗";
-      const issuePart = errorCount > 0 || warningCount > 0 ? ` | ${errorCount}E ${warningCount}W` : "";
+      const issueParts: string[] = [];
+      if (errorCount > 0) issueParts.push(`${errorCount} error${errorCount > 1 ? "s" : ""}`);
+      if (warningCount > 0) issueParts.push(`${warningCount} warning${warningCount > 1 ? "s" : ""}`);
+      const issuePart = issueParts.length ? ` | ${issueParts.join(", ")}` : "";
       ctx.ui.setStatus("xcode-build", `${icon} ${base}${issuePart}`);
 
       // 7. Truncate output for LLM
