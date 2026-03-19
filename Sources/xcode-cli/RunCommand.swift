@@ -50,20 +50,23 @@ struct RunCommand: ParsableCommand {
     @Option(name: .long, help: "Filter console logs by pattern (case-insensitive substring match)")
     var grep: String?
 
+    @Flag(name: .long, help: "Output results as JSON (for tool integrations)")
+    var json: Bool = false
+
     mutating func run() throws {
         // 1. Resolve project and simulator first (needed for build destination)
         let info = try ProjectFinder.discover(workspace: workspace, project: project, scheme: scheme)
         guard let schemeName = info.scheme else {
-            print("Error: Could not determine scheme. Use --scheme to specify.")
-            throw ExitCode.failure
+            try failWith("Could not determine scheme. Use --scheme to specify.")
         }
 
         let simListResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "list", "devices", "-j"])
         let allDevices = SimulatorFinder.parseDevices(from: simListResult.output)
         guard let device = SimulatorFinder.findBest(from: allDevices, matching: simulator) else {
-            print("Error: No suitable iOS Simulator found.\(simulator.map { " No match for '\($0)'." } ?? "")")
-            throw ExitCode.failure
+            try failWith("No suitable iOS Simulator found.\(simulator.map { " No match for '\($0)'." } ?? "")")
         }
+
+        jsonSet("simulator", device.name)
 
         // 2. Build (unless --skip-build), targeting the selected simulator
         if !skipBuild {
@@ -75,7 +78,7 @@ struct RunCommand: ParsableCommand {
                           "-destination", "platform=iOS Simulator,id=\(device.udid)"]
 
             let label = schemeName
-            print("Building \(label) (\(configuration)) for \(device.name)...")
+            if !json { print("Building \(label) (\(configuration)) for \(device.name)...") }
 
             let start = Date()
             let result = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["xcodebuild"] + buildArgs)
@@ -88,20 +91,28 @@ struct RunCommand: ParsableCommand {
                 filter: .errors,
                 rawOutput: result.output
             )
-            print(formatter.formatted)
 
-            if result.exitCode != 0 { throw ExitCode.failure }
+            jsonSet("buildSuccess", result.exitCode == 0)
+            jsonSet("buildElapsed", elapsed)
+            jsonSet("errorCount", formatter.errors.count)
+            jsonSet("warningCount", formatter.warnings.count)
+            jsonSet("buildOutput", formatter.formatted)
+
+            if !json { print(formatter.formatted) }
+
+            if result.exitCode != 0 {
+                try failWith(nil)
+            }
         }
 
         let output = RunOutputConfig(debug: debug, console: console)
 
         // 4. Boot simulator if needed
         if !device.isBooted {
-            if output.showStatusMessages { print("Booting \(device.name)...") }
+            if !json && output.showStatusMessages { print("Booting \(device.name)...") }
             let bootResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "boot", device.udid])
             if bootResult.exitCode != 0 {
-                print("Error: Failed to boot simulator: \(bootResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                throw ExitCode.failure
+                try failWith("Failed to boot simulator: \(bootResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
         }
 
@@ -121,8 +132,7 @@ struct RunCommand: ParsableCommand {
         let executableName = extractSetting("EXECUTABLE_NAME", from: settingsResult.output)
 
         guard let bundleId else {
-            print("Error: Could not determine bundle identifier from build settings.")
-            throw ExitCode.failure
+            try failWith("Could not determine bundle identifier from build settings.")
         }
 
         // Compute app binary path for LLDB symbol loading
@@ -135,11 +145,10 @@ struct RunCommand: ParsableCommand {
         // 6. Install app
         if let buildDir, let productName {
             let appPath = "\(buildDir)/\(productName)"
-            if output.showStatusMessages { print("Installing \(productName) on \(device.name)...") }
+            if !json && output.showStatusMessages { print("Installing \(productName) on \(device.name)...") }
             let installResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "install", device.udid, appPath])
             if installResult.exitCode != 0 {
-                print("Error: Install failed: \(installResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                throw ExitCode.failure
+                try failWith("Install failed: \(installResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
         }
 
@@ -162,7 +171,7 @@ struct RunCommand: ParsableCommand {
         if debug {
             // LLDB interactive session
             if shouldLaunch {
-                if output.showStatusMessages { print("Launching \(schemeName) with debugger on \(device.name)...") }
+                if !json && output.showStatusMessages { print("Launching \(schemeName) with debugger on \(device.name)...") }
                 // Launch the app first, then attach LLDB
                 let launchResult = ProcessRunner.exec(
                     "/usr/bin/xcrun",
@@ -170,14 +179,13 @@ struct RunCommand: ParsableCommand {
                 )
                 if launchResult.exitCode != 0 {
                     logProcess?.terminate()
-                    print("Error: Launch failed: \(launchResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                    throw ExitCode.failure
+                    try failWith("Launch failed: \(launchResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
                 }
                 // Extract PID from launch output (format: "com.app.bundle: 12345")
                 let pid = launchResult.output.split(separator: ":").last?.trimmingCharacters(in: .whitespacesAndNewlines)
                 runLLDB(pid: pid, waitForName: nil, appBinaryPath: appBinaryPath, hasLogProcess: logProcess != nil)
             } else {
-                if output.showStatusMessages {
+                if !json && output.showStatusMessages {
                     print("Waiting for \(schemeName) to launch on \(device.name)...")
                     print("Launch the app manually in the Simulator, then LLDB will attach.")
                 }
@@ -186,28 +194,60 @@ struct RunCommand: ParsableCommand {
             logProcess?.terminate()
         } else if shouldLaunch {
             // No debugger — just launch and stream logs
-            if output.showStatusMessages { print("Launching \(schemeName) on \(device.name)...") }
+            if !json && output.showStatusMessages { print("Launching \(schemeName) on \(device.name)...") }
             let launchResult = ProcessRunner.exec("/usr/bin/xcrun", arguments: ["simctl", "launch", device.udid, bundleId])
             if launchResult.exitCode != 0 {
                 logProcess?.terminate()
-                print("Error: Launch failed: \(launchResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                throw ExitCode.failure
+                try failWith("Launch failed: \(launchResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
 
             if console, let logProc = logProcess {
                 let appPid: Int32? = launchResult.output.split(separator: ":")
                     .last.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                if output.showStatusMessages { print("Streaming console (Ctrl+C or terminate app to stop)...\n") }
+                if !json && output.showStatusMessages { print("Streaming console (Ctrl+C or terminate app to stop)...\n") }
                 waitForProcessExit(logProcess: logProc, appPid: appPid)
             }
         } else {
             // --wait --no-debug: just install and wait
-            if output.showStatusMessages { print("App installed. Launch it manually in the Simulator.") }
+            if !json && output.showStatusMessages { print("App installed. Launch it manually in the Simulator.") }
             if console, let logProc = logProcess {
-                if output.showStatusMessages { print("Streaming console (Ctrl+C to stop)...\n") }
+                if !json && output.showStatusMessages { print("Streaming console (Ctrl+C to stop)...\n") }
                 logProc.waitUntilExit()
             }
         }
+
+        // Success — emit JSON if requested
+        if json {
+            jsonSet("success", true)
+            jsonSet("launched", shouldLaunch)
+            emitJSON()
+        }
+    }
+
+    // MARK: - JSON helpers
+
+    nonisolated(unsafe) private static var _jsonResult: [String: Any] = [:]
+
+    private func jsonSet(_ key: String, _ value: Any) {
+        Self._jsonResult[key] = value
+    }
+
+    private func emitJSON() {
+        guard let data = try? JSONSerialization.data(withJSONObject: Self._jsonResult, options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else { return }
+        print(str)
+        Self._jsonResult = [:]
+    }
+
+    private func failWith(_ message: String?) throws -> Never {
+        if json {
+            jsonSet("success", false)
+            if let message { jsonSet("error", message) }
+            emitJSON()
+        } else if let message {
+            print("Error: \(message)")
+        }
+        throw ExitCode.failure
     }
 
     // MARK: - Private
