@@ -278,7 +278,7 @@ export default function (pi: ExtensionAPI) {
           try {
             process.kill(appPid, 0); // signal 0 = check if alive
           } catch {
-            ui.setStatus("xcode-run", `🔴 Stopped ${base}${issues}`);
+            ui.setStatus("xcode-run", `⚪ Stopped ${base}${issues}`);
             stopMonitor();
           }
         }, 1000);
