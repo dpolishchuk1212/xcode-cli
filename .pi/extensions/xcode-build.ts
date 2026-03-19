@@ -272,13 +272,13 @@ export default function (pi: ExtensionAPI) {
       if (success && launched && appPid) {
         // App is running — monitor the PID
         stopMonitor();
-        ctx.ui.setStatus("xcode-run", `🟢 Running ${base}${issues}`);
+        ctx.ui.setStatus("xcode-run", `▶ Running ${base}${issues}`);
         const ui = ctx.ui;
         appMonitor = setInterval(() => {
           try {
             process.kill(appPid, 0); // signal 0 = check if alive
           } catch {
-            ui.setStatus("xcode-run", `⚪ Stopped ${base}${issues}`);
+            ui.setStatus("xcode-run", `■ Stopped ${base}${issues}`);
             stopMonitor();
           }
         }, 1000);
