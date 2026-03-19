@@ -129,7 +129,8 @@ export default function (pi: ExtensionAPI) {
       const { label, destination, commit, uncommitted } = await resolveInfo(pi, params, signal);
       const base = buildStatusBase(label, config, destination, commit, uncommitted);
 
-      ctx.ui.setStatus("xcode-build", `⏳ Building ${base}`);
+      const t = (ctx.ui as any).theme;
+      ctx.ui.setStatus("xcode-build", t.fg("warning", `⏳ Building ${base}`));
       onUpdate?.({ content: [{ type: "text", text: `⏳ Building ${base}` }], details: { status: `⏳ Building ${base}` } });
 
       const buildArgs: string[] = ["build", "--json"];
@@ -156,7 +157,10 @@ export default function (pi: ExtensionAPI) {
       }
 
       const icon = success ? "✓" : "✗";
-      ctx.ui.setStatus("xcode-build", `${icon} ${base}${formatIssues(errorCount, warningCount)}`);
+      const issues = formatIssues(errorCount, warningCount);
+      ctx.ui.setStatus("xcode-build", success
+        ? t.fg("success", `${icon} ${base}${issues}`)
+        : t.fg("error", `${icon} ${base}${issues}`));
 
       const finalOutput = truncateOutput(output);
       return {
@@ -225,8 +229,9 @@ export default function (pi: ExtensionAPI) {
       const gitPart = commit ? ` | ${commit}` : "";
       const dirtyPart = commit ? (uncommitted > 0 ? ` | ${uncommitted} uncommitted` : " | clean") : "";
 
+      const t = (ctx.ui as any).theme;
       const buildingStatus = `⏳ Building ${label} | ${config}${gitPart}${dirtyPart}`;
-      ctx.ui.setStatus("xcode-run", buildingStatus);
+      ctx.ui.setStatus("xcode-run", t.fg("warning", buildingStatus));
       onUpdate?.({ content: [{ type: "text", text: buildingStatus }], details: { status: buildingStatus } });
 
       // Run with JSON (--no-debug --no-console for non-interactive)
@@ -272,20 +277,22 @@ export default function (pi: ExtensionAPI) {
       if (success && launched && appPid) {
         // App is running — monitor the PID
         stopMonitor();
-        ctx.ui.setStatus("xcode-run", `▶ Running ${base}${issues}`);
+        ctx.ui.setStatus("xcode-run", t.fg("success", `▶ Running ${base}${issues}`));
         const ui = ctx.ui;
         appMonitor = setInterval(() => {
           try {
             process.kill(appPid, 0); // signal 0 = check if alive
           } catch {
-            ui.setStatus("xcode-run", `■ Stopped ${base}${issues}`);
+            ui.setStatus("xcode-run", t.fg("dim", `■ Stopped ${base}${issues}`));
             stopMonitor();
           }
         }, 1000);
       } else {
         stopMonitor();
         const icon = success ? "✓" : "✗";
-        ctx.ui.setStatus("xcode-run", `${icon} ${base}${issues}`);
+        ctx.ui.setStatus("xcode-run", success
+          ? t.fg("success", `${icon} ${base}${issues}`)
+          : t.fg("error", `${icon} ${base}${issues}`));
       }
 
       // Build output text for LLM
