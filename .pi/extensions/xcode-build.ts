@@ -311,15 +311,20 @@ export default function (pi: ExtensionAPI) {
         // Spawn background console process writing to a log file
         if (wantConsole && deviceUDID && bundleId) {
           logFile = `${LOG_FILE_PREFIX}${appPid}.log`;
-          const child = spawn("xcode-cli", [
-            "console",
-            "--device-udid", deviceUDID,
-            "--bundle-id", bundleId,
-            "--app-pid", String(appPid),
-            "--log-file", logFile,
-          ], { stdio: "ignore", detached: true });
-          child.unref();
-          consolePid = child.pid ?? null;
+          try {
+            const child = spawn("xcode-cli", [
+              "console",
+              "--device-udid", deviceUDID,
+              "--bundle-id", bundleId,
+              "--app-pid", String(appPid),
+              "--log-file", logFile,
+            ], { stdio: "ignore", detached: true });
+            child.on("error", () => {}); // swallow spawn errors
+            child.unref();
+            consolePid = child.pid ?? null;
+          } catch {
+            logFile = ""; // failed to spawn — no console
+          }
         }
       } else {
         stopMonitor();
