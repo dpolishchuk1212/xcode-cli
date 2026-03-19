@@ -233,6 +233,7 @@ export default function (pi: ExtensionAPI) {
 
       let success = runResult.code === 0;
       let simulator = params.simulator ?? "";
+      let simulatorOS = "";
       let buildOutput = "";
       let errorCount = 0;
       let warningCount = 0;
@@ -243,6 +244,7 @@ export default function (pi: ExtensionAPI) {
         const json = JSON.parse(runResult.stdout);
         success = json.success ?? success;
         simulator = json.simulator ?? simulator;
+        simulatorOS = json.simulatorOS ?? "";
         buildOutput = json.buildOutput ?? "";
         errorCount = json.errorCount ?? 0;
         warningCount = json.warningCount ?? 0;
@@ -252,8 +254,9 @@ export default function (pi: ExtensionAPI) {
         buildOutput = (runResult.stdout + runResult.stderr).trim();
       }
 
-      // Final status with simulator name from the run result
-      const simPart = simulator ? ` | ${simulator}` : "";
+      // Final status with simulator name + OS version from the run result
+      const simLabel = simulator ? (simulatorOS ? `${simulator} (${simulatorOS})` : simulator) : "";
+      const simPart = simLabel ? ` | ${simLabel}` : "";
       const base = `${label} | ${config}${simPart}${gitPart}${dirtyPart}`;
       const icon = success ? "✓" : "✗";
       ctx.ui.setStatus("xcode-run", `${icon} ${base}${formatIssues(errorCount, warningCount)}`);
@@ -261,7 +264,7 @@ export default function (pi: ExtensionAPI) {
       // Build output text for LLM
       let output = "";
       if (buildOutput) output += buildOutput;
-      if (launched) output += (output ? "\n" : "") + `✓ Launched on ${simulator || "Simulator"}`;
+      if (launched) output += (output ? "\n" : "") + `✓ Launched on ${simLabel || "Simulator"}`;
       if (error) output += (output ? "\n" : "") + `Error: ${error}`;
       if (!output) output = success ? "✓ Launched" : "✗ Run Failed";
 

@@ -67,6 +67,9 @@ struct RunCommand: ParsableCommand {
         }
 
         jsonSet("simulator", device.name)
+        if let ver = SimulatorFinder.iosVersion(from: device.runtime) {
+            jsonSet("simulatorOS", "iOS \(ver.major).\(ver.minor)")
+        }
 
         // 2. Build (unless --skip-build), targeting the selected simulator
         if !skipBuild {
