@@ -68,6 +68,7 @@ export default function (pi: ExtensionAPI) {
   let appMonitor: ReturnType<typeof setInterval> | null = null;
   let consolePid: number | null = null;
   let currentLogFile: string | null = null;
+  let currentBundleId: string | null = null;
   const LOG_FILE_PREFIX = "/tmp/xcode-cli-console-";
 
   function stopMonitor() {
@@ -81,7 +82,11 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  pi.on("session_shutdown", async () => { stopMonitor(); stopConsole(); });
+  async function stopDebug() {
+    await pi.exec("xcode-cli", ["debug", "stop"], { timeout: 5_000 }).catch(() => {});
+  }
+
+  pi.on("session_shutdown", async () => { stopMonitor(); stopConsole(); await stopDebug(); });
   // ── xcode_build ──────────────────────────────────────────────────────
 
   pi.registerTool({
@@ -278,6 +283,7 @@ export default function (pi: ExtensionAPI) {
         simulatorOS = json.simulatorOS ?? "";
         deviceUDID = json.deviceUDID ?? "";
         bundleId = json.bundleId ?? "";
+        if (bundleId) currentBundleId = bundleId;
         buildOutput = json.buildOutput ?? "";
         errorCount = json.errorCount ?? 0;
         warningCount = json.warningCount ?? 0;
@@ -432,6 +438,102 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: `${lineCount} matching line${lineCount > 1 ? "s" : ""}:\n${finalOutput}` }],
       };
+    },
+  });
+
+  // ── xcode_debug ──────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "xcode_debug",
+    label: "Xcode Debug",
+    description:
+      "Run LLDB debugger commands on a running or crashed iOS Simulator app. " +
+      "Auto-starts a debug session if none exists. " +
+      "The app process is paused while LLDB commands run. " +
+      "Use 'process interrupt' to pause a running app, 'process continue' to resume.",
+    promptSnippet: "Run LLDB commands on the app (bt, frame variable, p expression, breakpoint set, etc.)",
+    promptGuidelines: [
+      "Use xcode_debug to inspect app state, investigate crashes, and run LLDB commands.",
+      "The app must be paused to inspect threads/variables. Use 'process interrupt' first if it's running.",
+      "After inspection, use 'process continue' to resume the app.",
+      "Common commands: 'bt' (backtrace), 'frame variable' (locals), 'thread list', 'p <expr>' (evaluate).",
+      "For breakpoints: 'breakpoint set -f File.swift -l 42', then 'process continue' to hit it.",
+    ],
+    parameters: Type.Object({
+      commands: Type.Array(Type.String(), {
+        description: "LLDB commands to execute (e.g., ['process interrupt', 'bt', 'frame variable'])",
+      }),
+    }),
+
+    renderCall(args: any, theme: any) {
+      const cmds = args.commands ?? [];
+      let text = theme.fg("toolTitle", theme.bold("xcode_debug "));
+      text += theme.fg("muted", cmds.join(" → "));
+      return new Text(text, 0, 0);
+    },
+
+    renderResult(result: any, { expanded }: any, theme: any) {
+      const content = result.content?.[0]?.text ?? "";
+      const lines = content.split("\n");
+      const summary = lines[0] ?? "";
+      if (!expanded || lines.length <= 3) return new Text(theme.fg("dim", summary), 0, 0);
+      let text = summary;
+      for (const line of lines.slice(1)) text += "\n" + theme.fg("dim", line);
+      return new Text(text, 0, 0);
+    },
+
+    async execute(_toolCallId, params: any, signal) {
+      const commands: string[] = params.commands ?? [];
+      if (!commands.length) {
+        return { content: [{ type: "text", text: "No commands provided." }] };
+      }
+
+      // Auto-start debug session if none exists
+      const statusResult = await pi.exec("xcode-cli", ["debug", "status", "--json"], { signal, timeout: 10_000 });
+      let active = false;
+      try { active = JSON.parse(statusResult.stdout).active === true; } catch {}
+
+      if (!active) {
+        // Try to find the app and start a session
+        const appName = currentBundleId?.split(".").pop() ?? "";
+        if (!appName) {
+          return { content: [{ type: "text", text: "No app running. Use xcode_run first, then xcode_debug." }] };
+        }
+
+        const startResult = await pi.exec("xcode-cli", ["debug", "start", "--app-name", appName], {
+          signal, timeout: 15_000,
+        });
+        if (startResult.code !== 0) {
+          return {
+            content: [{ type: "text", text: `Failed to start debug session: ${(startResult.stdout + startResult.stderr).trim()}` }],
+          };
+        }
+      }
+
+      // Execute commands
+      const args = ["debug", "exec", "--json", ...commands];
+      const result = await pi.exec("xcode-cli", args, { signal, timeout: 60_000 });
+
+      if (result.code !== 0) {
+        return { content: [{ type: "text", text: `Debug exec failed: ${(result.stdout + result.stderr).trim()}` }] };
+      }
+
+      // Format output
+      let output = "";
+      try {
+        const json = JSON.parse(result.stdout);
+        for (const r of json.results ?? []) {
+          output += `(lldb) ${r.command}\n`;
+          if (r.output) output += r.output + (r.output.endsWith("\n") ? "" : "\n");
+        }
+      } catch {
+        output = result.stdout;
+      }
+
+      if (!output.trim()) output = "Commands executed (no output).";
+
+      const finalOutput = truncateOutput(output.trim());
+      return { content: [{ type: "text", text: finalOutput }] };
     },
   });
 }
