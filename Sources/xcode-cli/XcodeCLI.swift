@@ -6,6 +6,6 @@ struct XcodeCLI: ParsableCommand {
         commandName: "xcode-cli",
         abstract: "Token-efficient Xcode CLI for coding agents",
         version: "0.1.3",
-        subcommands: [BuildCommand.self, RunCommand.self]
+        subcommands: [BuildCommand.self, RunCommand.self, InfoCommand.self]
     )
 }

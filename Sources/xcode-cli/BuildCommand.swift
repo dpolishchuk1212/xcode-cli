@@ -28,6 +28,9 @@ struct BuildCommand: ParsableCommand {
     @Option(name: .shortAndLong, help: "Filter output: all (full log), issues (errors+warnings), errors (errors only)")
     var filter: OutputFilter = .errors
 
+    @Flag(name: .long, help: "Output results as JSON (for tool integrations)")
+    var json: Bool = false
+
     mutating func run() throws {
         let info = try ProjectFinder.discover(
             workspace: workspace,
@@ -61,7 +64,9 @@ struct BuildCommand: ParsableCommand {
             ?? info.project?.replacingOccurrences(of: ".xcodeproj", with: "")
             ?? "project"
 
-        print("Building \(label) (\(configuration))...")
+        if !json {
+            print("Building \(label) (\(configuration))...")
+        }
 
         let start = Date()
         let result = ProcessRunner.exec(
@@ -78,7 +83,19 @@ struct BuildCommand: ParsableCommand {
             rawOutput: result.output
         )
 
-        print(formatter.formatted)
+        if json {
+            let dict: [String: Any] = [
+                "success": result.exitCode == 0,
+                "elapsed": elapsed,
+                "errorCount": formatter.errors.count,
+                "warningCount": formatter.warnings.count,
+                "output": formatter.formatted,
+            ]
+            let data = try JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
+            print(String(data: data, encoding: .utf8) ?? "{}")
+        } else {
+            print(formatter.formatted)
+        }
 
         if result.exitCode != 0 {
             throw ExitCode.failure
