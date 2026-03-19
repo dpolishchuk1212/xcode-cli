@@ -52,11 +52,9 @@ struct BuildCommand: ParsableCommand {
 
         args += ["-configuration", configuration]
 
-        if let dest = destination {
+        let effectiveDestination = destination ?? ProjectFinder.defaultDestination(for: info)
+        if let dest = effectiveDestination {
             args += ["-destination", dest]
-        } else if info.workspace == nil && info.project == nil {
-            // SPM packages require an explicit destination
-            args += ["-destination", "platform=macOS"]
         }
 
         let label = info.scheme
@@ -84,13 +82,14 @@ struct BuildCommand: ParsableCommand {
         )
 
         if json {
-            let dict: [String: Any] = [
+            var dict: [String: Any] = [
                 "success": result.exitCode == 0,
                 "elapsed": elapsed,
                 "errorCount": formatter.errors.count,
                 "warningCount": formatter.warnings.count,
                 "output": formatter.formatted,
             ]
+            if let dest = effectiveDestination { dict["destination"] = dest }
             let data = try JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
             print(String(data: data, encoding: .utf8) ?? "{}")
         } else {

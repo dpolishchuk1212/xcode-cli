@@ -77,6 +77,7 @@ export default function (pi: ExtensionAPI) {
       addProjectArgs(infoArgs, params);
 
       let label = params.scheme ?? "project";
+      let destination = params.destination ?? "";
       let commit = "";
       let uncommitted = 0;
 
@@ -85,22 +86,23 @@ export default function (pi: ExtensionAPI) {
         try {
           const info = JSON.parse(infoResult.stdout);
           label = info.label ?? label;
+          destination = destination || info.destination || "";
           commit = info.commit ?? "";
           uncommitted = info.uncommitted ?? 0;
         } catch {}
       }
 
       // 2. Status parts (reused for both ⏳ and ✓/✗)
-      const destPart = params.destination ? ` | ${params.destination}` : "";
+      const destPart = destination ? ` | ${destination}` : "";
       const gitPart = commit ? ` | ${commit}` : "";
       const dirtyPart = commit ? (uncommitted > 0 ? ` | ${uncommitted} uncommitted` : " | clean") : "";
       const base = `${label} | ${config}${destPart}${gitPart}${dirtyPart}`;
 
       // 3. Show building status
-      ctx.ui.setStatus("xcode-build", `⏳ ${base}`);
+      ctx.ui.setStatus("xcode-build", `⏳ Building ${base}`);
       onUpdate?.({
-        content: [{ type: "text", text: `⏳ ${base}` }],
-        details: { status: `⏳ ${base}` },
+        content: [{ type: "text", text: `⏳ Building ${base}` }],
+        details: { status: `⏳ Building ${base}` },
       });
 
       // 4. Build with JSON output

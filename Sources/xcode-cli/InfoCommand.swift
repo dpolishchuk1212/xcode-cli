@@ -33,6 +33,7 @@ struct InfoCommand: ParsableCommand {
         if let ws = info.workspace { dict["workspace"] = ws }
         if let proj = info.project { dict["project"] = proj }
         if let s = info.scheme { dict["scheme"] = s }
+        if let dest = ProjectFinder.defaultDestination(for: info) { dict["destination"] = dest }
         if let commit = GitInfo.commitHash() { dict["commit"] = commit }
         dict["uncommitted"] = GitInfo.uncommittedCount()
 

@@ -58,6 +58,15 @@ public enum ProjectFinder {
         throw ProjectNotFoundError(directory: cwd)
     }
 
+    /// Default build destination when none is specified.
+    /// SPM packages need an explicit destination; Xcode projects let xcodebuild decide.
+    public static func defaultDestination(for info: ProjectInfo) -> String? {
+        if info.workspace == nil && info.project == nil {
+            return "platform=macOS"
+        }
+        return nil
+    }
+
     // MARK: - Private
 
     private static func resolveScheme(workspace: String?, project: String?) -> String? {
