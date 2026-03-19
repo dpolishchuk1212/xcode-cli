@@ -64,6 +64,13 @@ function buildStatusBase(label: string, config: string, destination: string, com
 }
 
 export default function (pi: ExtensionAPI) {
+  let appMonitor: ReturnType<typeof setInterval> | null = null;
+
+  function stopMonitor() {
+    if (appMonitor) { clearInterval(appMonitor); appMonitor = null; }
+  }
+
+  pi.on("session_shutdown", async () => { stopMonitor(); });
   // ── xcode_build ──────────────────────────────────────────────────────
 
   pi.registerTool({
@@ -238,6 +245,7 @@ export default function (pi: ExtensionAPI) {
       let errorCount = 0;
       let warningCount = 0;
       let launched = false;
+      let appPid = 0;
       let error = "";
 
       try {
@@ -249,6 +257,7 @@ export default function (pi: ExtensionAPI) {
         errorCount = json.errorCount ?? 0;
         warningCount = json.warningCount ?? 0;
         launched = json.launched ?? false;
+        appPid = json.appPid ?? 0;
         error = json.error ?? "";
       } catch {
         buildOutput = (runResult.stdout + runResult.stderr).trim();
@@ -258,8 +267,26 @@ export default function (pi: ExtensionAPI) {
       const simLabel = simulator ? (simulatorOS ? `${simulator} (${simulatorOS})` : simulator) : "";
       const simPart = simLabel ? ` | ${simLabel}` : "";
       const base = `${label} | ${config}${simPart}${gitPart}${dirtyPart}`;
-      const icon = success ? "✓" : "✗";
-      ctx.ui.setStatus("xcode-run", `${icon} ${base}${formatIssues(errorCount, warningCount)}`);
+      const issues = formatIssues(errorCount, warningCount);
+
+      if (success && launched && appPid) {
+        // App is running — monitor the PID
+        stopMonitor();
+        ctx.ui.setStatus("xcode-run", `🟢 Running ${base}${issues}`);
+        const ui = ctx.ui;
+        appMonitor = setInterval(() => {
+          try {
+            process.kill(appPid, 0); // signal 0 = check if alive
+          } catch {
+            ui.setStatus("xcode-run", `🔴 Stopped ${base}${issues}`);
+            stopMonitor();
+          }
+        }, 1000);
+      } else {
+        stopMonitor();
+        const icon = success ? "✓" : "✗";
+        ctx.ui.setStatus("xcode-run", `${icon} ${base}${issues}`);
+      }
 
       // Build output text for LLM
       let output = "";

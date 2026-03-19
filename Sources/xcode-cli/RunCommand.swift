@@ -204,9 +204,11 @@ struct RunCommand: ParsableCommand {
                 try failWith("Launch failed: \(launchResult.output.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
 
+            let appPid: Int32? = launchResult.output.split(separator: ":")
+                .last.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            if let pid = appPid { jsonSet("appPid", pid) }
+
             if console, let logProc = logProcess {
-                let appPid: Int32? = launchResult.output.split(separator: ":")
-                    .last.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
                 if !json && output.showStatusMessages { print("Streaming console (Ctrl+C or terminate app to stop)...\n") }
                 waitForProcessExit(logProcess: logProc, appPid: appPid)
             }
