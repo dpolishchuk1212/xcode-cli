@@ -245,8 +245,12 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("xcode-run", t.fg("warning", buildingStatus));
       onUpdate?.({ content: [{ type: "text", text: buildingStatus }], details: { status: buildingStatus } });
 
-      // Run with JSON (--no-debug --no-console for non-interactive)
+      const wantConsole = params.console !== false;
+
+      // Build + install (+ launch when console is off)
+      // When console is on, --wait skips launch so console command can do it with stdout capture
       const runArgs: string[] = ["run", "--json", "--no-debug", "--no-console"];
+      if (wantConsole) runArgs.push("--wait");
       addProjectArgs(runArgs, params);
       if (params.configuration) runArgs.push("-c", params.configuration);
       if (params.simulator) runArgs.push("--simulator", params.simulator);
@@ -288,44 +292,59 @@ export default function (pi: ExtensionAPI) {
       const simPart = simLabel ? ` | ${simLabel}` : "";
       const base = `${label} | ${config}${simPart}${gitPart}${dirtyPart}`;
       const issues = formatIssues(errorCount, warningCount);
-
-      // Start console streaming if requested (default: true)
-      const wantConsole = params.console !== false;
       let logFile = "";
 
-      if (success && launched && appPid) {
-        // App is running — monitor the PID
+      if (success && wantConsole && deviceUDID && bundleId) {
+        // Console mode: spawn console --launch (handles launch + stdout + log stream)
+        stopMonitor();
+        stopConsole();
+
+        // Use a timestamp-based log file (PID not known yet — console does the launch)
+        logFile = `${LOG_FILE_PREFIX}${Date.now()}.log`;
+        try {
+          const child = spawn("xcode-cli", [
+            "console",
+            "--device-udid", deviceUDID,
+            "--bundle-id", bundleId,
+            "--launch",
+            "--log-file", logFile,
+          ], { stdio: "ignore", detached: true });
+          child.on("error", () => {});
+          child.unref();
+          consolePid = child.pid ?? null;
+
+          // Monitor the console process — when it dies, app has terminated
+          ctx.ui.setStatus("xcode-run", t.fg("success", `▶ Running ${base}${issues}`));
+          const ui = ctx.ui;
+          const cPid = consolePid;
+          if (cPid) {
+            appMonitor = setInterval(() => {
+              try {
+                process.kill(cPid, 0);
+              } catch {
+                ui.setStatus("xcode-run", t.fg("dim", `■ Stopped ${base}${issues}`));
+                stopMonitor();
+              }
+            }, 1000);
+          }
+          launched = true;
+        } catch {
+          logFile = "";
+        }
+      } else if (success && launched && appPid) {
+        // No-console mode: app already launched by run command — just monitor PID
         stopMonitor();
         stopConsole();
         ctx.ui.setStatus("xcode-run", t.fg("success", `▶ Running ${base}${issues}`));
         const ui = ctx.ui;
         appMonitor = setInterval(() => {
           try {
-            process.kill(appPid, 0); // signal 0 = check if alive
+            process.kill(appPid, 0);
           } catch {
             ui.setStatus("xcode-run", t.fg("dim", `■ Stopped ${base}${issues}`));
             stopMonitor();
           }
         }, 1000);
-
-        // Spawn background console process writing to a log file
-        if (wantConsole && deviceUDID && bundleId) {
-          logFile = `${LOG_FILE_PREFIX}${appPid}.log`;
-          try {
-            const child = spawn("xcode-cli", [
-              "console",
-              "--device-udid", deviceUDID,
-              "--bundle-id", bundleId,
-              "--app-pid", String(appPid),
-              "--log-file", logFile,
-            ], { stdio: "ignore", detached: true });
-            child.on("error", () => {}); // swallow spawn errors
-            child.unref();
-            consolePid = child.pid ?? null;
-          } catch {
-            logFile = ""; // failed to spawn — no console
-          }
-        }
       } else {
         stopMonitor();
         stopConsole();

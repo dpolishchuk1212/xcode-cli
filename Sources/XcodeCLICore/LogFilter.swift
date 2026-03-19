@@ -15,9 +15,10 @@ public struct LogFilter: Sendable {
     }
 
     /// Build `log stream --predicate` for an app's bundle identifier.
-    /// Matches the app's subsystem plus its own process output with no subsystem set.
+    /// Matches the app's subsystem plus any log from the app's process with no subsystem
+    /// (covers NSLog via Foundation and direct os_log calls without a subsystem).
     public static func logStreamPredicate(bundleId: String) -> String {
         let appName = bundleId.split(separator: ".").last.map(String.init) ?? bundleId
-        return "subsystem == '\(bundleId)' OR (processImagePath ENDSWITH '/\(appName)' AND senderImagePath ENDSWITH '/\(appName)' AND subsystem == '')"
+        return "subsystem == '\(bundleId)' OR (processImagePath ENDSWITH '/\(appName)' AND subsystem == '')"
     }
 }
